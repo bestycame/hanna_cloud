@@ -29,7 +29,9 @@ class HannaCloudClient:
             endpoint (str): API endpoint.
             **kwargs: Additional arguments for requests.request.
         Returns:
-            dict: The 'data' field from the API response, or an empty dict if not present.
+            dict: The 'data' field from the API response,
+                  or an empty dict if not present.
+                  If the response is not JSON, it will be returned as is.
         Raises:
             requests.HTTPError: If the HTTP request fails.
         """
@@ -45,18 +47,25 @@ class HannaCloudClient:
 
     def hanna_encrypt(self, plaintext: str) -> str:
         """
-        Encrypts the given plaintext using AES CBC mode with a random IV and a base64-encoded key.
+        Encrypts the given plaintext using AES CBC mode
+        with a random IV and a base64-encoded key.
         Args:
             plaintext (str): The text to encrypt.
         Returns:
-            str: The IV (as a string) and the encrypted data (as hex), separated by a colon.
+            str: The IV and the encrypted data (as hex), separated by a colon.
         """
         # Decode the base64-encoded key to bytes
         key = base64.b64decode(self.key_base64)
-        iv = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(16)).encode()
+        # Generate a random IV
+        choices = string.ascii_letters + string.digits
+        iv = ''.join(random.choice(choices) for _ in range(16)).encode()
+        # Create a new AES cipher with the key and IV
         cipher = AES.new(key, AES.MODE_CBC, iv)
+        # Pad the plaintext to the block size
         padded = pad(plaintext.encode(), AES.block_size)
+        # Encrypt the padded plaintext
         encrypted = cipher.encrypt(padded)
+        # Return the IV and the encrypted data (as hex), separated by a colon
         return f"{iv.decode()}:{encrypted.hex()}"
 
     def authenticate(self, email: str, password: str) -> tuple[str, str]:
@@ -80,7 +89,8 @@ class HannaCloudClient:
             },
             'query': (
                 """
-                query Login($email: String!, $password: String!, $userLanguage: String!, $source: String) {
+                query Login($email: String!, $password: String!,
+                            $userLanguage: String!, $source: String) {
                   login(
                     email: $email
                     password: $password
@@ -186,7 +196,8 @@ class HannaCloudClient:
             "operationName": "Devices",
             "variables": {
                 "modelGroups": [
-                    "BL12x", "BL13x", "HALO", "photoMeter", "multiParameter", "BL13xs"
+                    "BL12x", "BL13x", "HALO", "photoMeter",
+                    "multiParameter", "BL13xs"
                 ],
                 "deviceLogs": True
             },
@@ -268,13 +279,16 @@ class HannaCloudClient:
         }
         return self._make_request('POST', 'graphql', json=json_data)
 
-    def getDeviceLogHistory(self, device_id: str, from_date: datetime, to_date: datetime):
+    def getDeviceLogHistory(self,
+                            device_id: str,
+                            from_dt: datetime,
+                            to_dt: datetime):
         """
         Retrieves the device log history for a given device and date range.
         Args:
             device_id (str): The device ID.
-            from_date (datetime): Start date for log history.
-            to_date (datetime): End date for log history.
+            from_dt (datetime): Start date for log history.
+            to_dt (datetime): End date for log history.
         Returns:
             dict: Device log history data.
         """
@@ -282,13 +296,15 @@ class HannaCloudClient:
             "operationName": "deviceLogHistory",
             "variables": {
                 "deviceId": device_id,
-                "from": from_date.isoformat(),
-                "to": to_date.isoformat(),
+                "from": from_dt.isoformat(),
+                "to": to_dt.isoformat(),
                 "count": 10000
             },
             "query": (
                 """
-                query deviceLogHistory($deviceId: String!, $from: String!, $to: String!) {
+                query deviceLogHistory($deviceId: String!,
+                                       $from: String!,
+                                       $to: String!) {
                   deviceLogHistory(deviceId: $deviceId, from: $from, to: $to) {
                     data
                     endDate
