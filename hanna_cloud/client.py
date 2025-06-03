@@ -16,6 +16,7 @@ class HannaCloudClient:
         Initialize the HannaCloud API client.
         """
         self.base_url = "https://www.hannacloud.com/api"
+        # TODO: Found in the JavaScript document. Update to fetch dynamically.
         self.key_base64 = "MzJmODBmMDU0ZTAyNDFjYWM0YTVhOGQxY2ZlZTkwMDM="
         self.headers = {'Accept': '*/*',
                         'content-type': 'application/json'}
@@ -137,38 +138,7 @@ class HannaCloudClient:
         self.refresh_token = refresh_token
         return self.access_token, self.refresh_token
 
-    def GetDashboardFirmwareDetails(self):
-        """
-        Retrieves firmware details for the dashboard devices.
-        Returns:
-            dict: Firmware details for the specified devices.
-        """
-        json_data = {
-            'operationName': 'GetDashboardFirmwareDetails',
-            'variables': {
-                'deviceList': [
-                    {
-                        'DID': 'BL132_7A67F4',
-                        'DM': 'BL132',
-                        'mainBoard': '1.02',
-                        'ethernetBoard': '1.09'
-                    }
-                ]
-            },
-            'query': (
-                """
-                query GetDashboardFirmwareDetails($deviceList: [JSONObject]) {
-                  getDashboardFirmwareDetails(deviceList: $deviceList) {
-                    deviceFirmware
-                    __typename
-                  }
-                }
-                """
-            )
-        }
-        return self._make_request('POST', 'graphql', json=json_data)
-
-    def GetLastDeviceReading(self):
+    def GetLastDeviceReading(self, device_id: str):
         """
         Retrieves the last reading for the specified device(s).
         Returns:
@@ -176,7 +146,7 @@ class HannaCloudClient:
         """
         json_data = {
             'operationName': 'GetLastDeviceReading',
-            'variables': {'deviceIds': ['BL132_7A67F4']},
+            'variables': {'deviceIds': [device_id]},
             'query': (
                 'query GetLastDeviceReading($deviceIds: [String!]) {'
                 '\n  lastDeviceReadings(deviceIds: $deviceIds) {'
@@ -184,7 +154,7 @@ class HannaCloudClient:
             )
         }
         response = self._make_request('POST', 'graphql', json=json_data)
-        return response
+        return response.get('lastDeviceReadings', [])
 
     def GetDevices(self):
         """
@@ -196,8 +166,7 @@ class HannaCloudClient:
             "operationName": "Devices",
             "variables": {
                 "modelGroups": [
-                    "BL12x", "BL13x", "HALO", "photoMeter",
-                    "multiParameter", "BL13xs"
+                    "BL12x", "BL13x", "HALO", "photoMeter", "multiParameter", "BL13xs"  # noqa: E501
                 ],
                 "deviceLogs": True
             },
@@ -243,7 +212,8 @@ class HannaCloudClient:
                 """
             )
         }
-        return self._make_request('POST', 'graphql', json=json_data)
+        response = self._make_request('POST', 'graphql', json=json_data)
+        return response.get('devices', [])
 
     def getUser(self):
         """
@@ -277,12 +247,13 @@ class HannaCloudClient:
                 """
             )
         }
-        return self._make_request('POST', 'graphql', json=json_data)
+        response = self._make_request('POST', 'graphql', json=json_data)
+        return response.get('currentUser', {})
 
     def getDeviceLogHistory(self,
                             device_id: str,
-                            from_dt: datetime,
-                            to_dt: datetime):
+                            from_dt: datetime = None,
+                            to_dt: datetime = None):
         """
         Retrieves the device log history for a given device and date range.
         Args:
@@ -292,6 +263,12 @@ class HannaCloudClient:
         Returns:
             dict: Device log history data.
         """
+        from_dt = from_dt or datetime.now().replace(hour=0,
+                                                    minute=0,
+                                                    second=0,
+                                                    microsecond=0)
+        to_dt = to_dt or datetime.now()
+
         json_data = {
             "operationName": "deviceLogHistory",
             "variables": {
@@ -316,4 +293,5 @@ class HannaCloudClient:
                 """
             )
         }
-        return self._make_request('POST', 'graphql', json=json_data)
+        response = self._make_request('POST', 'graphql', json=json_data)
+        return response.get('deviceLogHistory', [])
