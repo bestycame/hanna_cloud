@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="hanna-cloud",
-    version="0.0.1",
+    version="0.0.2",
     author="Bestycame",
     author_email="bestycame@gmail.com",
     description="A Python client for the HannaCloud API",
@@ -27,5 +27,6 @@ setup(
     python_requires=">=3.7",
     install_requires=[
         "requests>=2.25.0",
+        "pycryptodome>=3.19.0",
     ],
 )

@@ -17,7 +17,7 @@ class HannaCloudClient:
         """
         self.base_url = "https://www.hannacloud.com/api"
         # TODO: Found in the JavaScript document. Update to fetch dynamically.
-        self.key_base64 = "MzJmODBmMDU0ZTAyNDFjYWM0YTVhOGQxY2ZlZTkwMDM="
+        self.key_base64 = None
         self.headers = {'Accept': '*/*',
                         'content-type': 'application/json'}
         logging.basicConfig(level=logging.INFO)
@@ -69,17 +69,20 @@ class HannaCloudClient:
         # Return the IV and the encrypted data (as hex), separated by a colon
         return f"{iv.decode()}:{encrypted.hex()}"
 
-    def authenticate(self, email: str, password: str) -> tuple[str, str]:
+    def authenticate(self, email: str, password: str, key_base64: str) \
+            -> tuple[str, str]:
         """
         Authenticates the user with the given email and password.
         Args:
             email (str): The user's email address.
             password (str): The user's password.
+            key_base64 (str): The base64-encoded key.
         Returns:
             Tuple[str, str]: The access token and refresh token.
         Raises:
             ValueError: If authentication fails or tokens are missing.
         """
+        self.key_base64 = key_base64
         json_data = {
             'operationName': 'Login',
             'variables': {
