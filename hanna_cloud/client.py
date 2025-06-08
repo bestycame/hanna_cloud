@@ -293,7 +293,7 @@ class HannaCloudClient:
         response = self._make_request('POST', 'graphql', json=json_data)
         return response.get('deviceLogHistory', [])
 
-    def remote_hold(self, device_id: str, setting: bool):
+    def set_remote_hold(self, device_id: str, setting: bool):
         """
         Sets the remote hold (disable pumps)setting for a device.
         Args:
