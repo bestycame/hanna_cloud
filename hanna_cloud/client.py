@@ -20,6 +20,9 @@ class HannaCloudClient:
         self.key_base64 = None
         self.headers = {'Accept': '*/*',
                         'content-type': 'application/json'}
+        self.access_token = None
+        self.email = None
+        self.password = None
         logging.basicConfig(level=logging.INFO)
 
     def _make_request(self, method, endpoint, **kwargs):
@@ -36,13 +39,20 @@ class HannaCloudClient:
         Raises:
             requests.HTTPError: If the HTTP request fails.
         """
-        headers = {**self.headers, **kwargs.get('headers', {})}
-        url = f'{self.base_url}/{endpoint}'
-        response = requests.request(method=method,
-                                    url=url,
-                                    headers=headers,
-                                    **kwargs)
-        logging.info(f"{method} {url} {response.status_code}")
+        def _execute_request():
+            self.headers['authorization'] = f"Bearer {self.access_token}"
+            headers = {**self.headers, **kwargs.get('headers', {})}
+            url = f'{self.base_url}/{endpoint}'
+            return requests.request(method=method, url=url, headers=headers, **kwargs)
+
+        response = _execute_request()
+        logging.info(f"{method} {self.base_url}/{endpoint} {response.status_code}")
+
+        if response.status_code == 403:
+            logging.info("Authentication failed: 403. Re-authenticating.")
+            self.authenticate(self.email, self.password, self.key_base64)
+            response = _execute_request()
+
         response.raise_for_status()
         return response.json().get('data', {})
 
@@ -82,6 +92,10 @@ class HannaCloudClient:
         Raises:
             ValueError: If authentication fails or tokens are missing.
         """
+        if any(not x for x in (email, password, key_base64)):
+            raise ValueError("Authentication failed: missing email, password, or key_base64.")
+        self.email = email
+        self.password = password
         self.key_base64 = key_base64
         json_data = {
             'operationName': 'Login',
@@ -103,7 +117,6 @@ class HannaCloudClient:
                   ) {
                     token
                     tokenType
-                    __typename
                   }
                 }
                 """
@@ -111,37 +124,15 @@ class HannaCloudClient:
         }
 
         response = self._make_request('POST', 'auth', json=json_data)
-        if 'login' not in response:
-            logging.error(
-                "'login' key missing in authentication response: %s",
-                response
-            )
-            raise ValueError(
-                "Authentication failed: 'login' key missing in response."
-            )
-        access_token = None
-        refresh_token = None
+        if not response.get("login", {}):
+            raise ValueError("Authentication failed: 'login' key missing in response.")
+
         for token in response['login']:
             if token.get('tokenType') == 'accessToken':
-                self.headers['authorization'] = (
-                    f"Bearer {token.get('token', '')}"
-                )
-                access_token = token.get('token')
-            elif token.get('tokenType') == 'refreshToken':
-                refresh_token = token.get('token')
-        if not access_token or not refresh_token:
-            logging.error(
-                "Tokens missing in authentication response: %s",
-                response
-            )
-            raise ValueError(
-                "Authentication failed: tokens missing in response."
-            )
-        self.access_token = access_token
-        self.refresh_token = refresh_token
-        return self.access_token, self.refresh_token
+                self.access_token = token.get('token')
+        return self.access_token
 
-    def GetLastDeviceReading(self, device_id: str):
+    def get_last_device_reading(self, device_id: str):
         """
         Retrieves the last reading for the specified device(s).
         Returns:
@@ -151,15 +142,21 @@ class HannaCloudClient:
             'operationName': 'GetLastDeviceReading',
             'variables': {'deviceIds': [device_id]},
             'query': (
-                'query GetLastDeviceReading($deviceIds: [String!]) {'
-                '\n  lastDeviceReadings(deviceIds: $deviceIds) {'
-                '\n    DID\n    DT\n    messages\n    __typename\n  }\n}'
+                """
+                query GetLastDeviceReading($deviceIds: [String!]) {
+                  lastDeviceReadings(deviceIds: $deviceIds) {
+                    DID
+                    DT
+                    messages
+                  }
+                }
+                """
             )
         }
         response = self._make_request('POST', 'graphql', json=json_data)
         return response.get('lastDeviceReadings', [])
 
-    def GetDevices(self):
+    def get_devices(self):
         """
         Retrieves a list of devices for the user.
         Returns:
@@ -169,7 +166,7 @@ class HannaCloudClient:
             "operationName": "Devices",
             "variables": {
                 "modelGroups": [
-                    "BL12x", "BL13x", "HALO", "photoMeter", "multiParameter", "BL13xs"  # noqa: E501
+                    "BL12x", "BL13x", "BL13xs"
                 ],
                 "deviceLogs": True
             },
@@ -218,7 +215,7 @@ class HannaCloudClient:
         response = self._make_request('POST', 'graphql', json=json_data)
         return response.get('devices', [])
 
-    def getUser(self):
+    def get_user(self):
         """
         Retrieves information about the current user.
         Returns:
@@ -253,10 +250,10 @@ class HannaCloudClient:
         response = self._make_request('POST', 'graphql', json=json_data)
         return response.get('currentUser', {})
 
-    def getDeviceLogHistory(self,
-                            device_id: str,
-                            from_dt: datetime = None,
-                            to_dt: datetime = None):
+    def get_device_log_history(self,
+                               device_id: str,
+                               from_dt: datetime = None,
+                               to_dt: datetime = None):
         """
         Retrieves the device log history for a given device and date range.
         Args:
@@ -266,10 +263,7 @@ class HannaCloudClient:
         Returns:
             dict: Device log history data.
         """
-        from_dt = from_dt or datetime.now().replace(hour=0,
-                                                    minute=0,
-                                                    second=0,
-                                                    microsecond=0)
+        from_dt = from_dt or datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         to_dt = to_dt or datetime.now()
 
         json_data = {
@@ -298,3 +292,29 @@ class HannaCloudClient:
         }
         response = self._make_request('POST', 'graphql', json=json_data)
         return response.get('deviceLogHistory', [])
+
+    def remote_hold(self, device_id: str, setting: bool):
+        """
+        Sets the remote hold (disable pumps)setting for a device.
+        Args:
+            device_id (str): The device ID.
+            setting (bool): The remote hold setting.
+        """
+        json_data = {
+            "operationName": "RemoteHold",
+            "variables": {"deviceId": device_id, "remoteHold": setting},
+            "query": (
+                """
+                mutation RemoteHold($deviceId: String!, $remoteHold: Boolean!) {
+                  deviceRemoteHold(deviceId: $deviceId, remoteHold: $remoteHold) {
+                    data
+                    __typename
+                  }
+                }
+                """
+            )
+        }
+        response = self._make_request('POST', 'graphql', json=json_data)
+        if response.get('deviceRemoteHold', {}).get('data', {}).get('message') != 'remoteHoldSuccess':
+            raise ValueError("Remote hold failed.")
+        return response.get('deviceRemoteHold', {})
