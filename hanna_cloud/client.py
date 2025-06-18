@@ -6,6 +6,7 @@ from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 from datetime import datetime
 import logging
+import time
 
 
 class HannaCloudClient:
@@ -46,7 +47,7 @@ class HannaCloudClient:
             return requests.request(method=method, url=url, headers=headers, **kwargs)
 
         response = _execute_request()
-        logging.info(f"{method} {self.base_url}/{endpoint} {response.status_code}")
+        logging.debug(f"{method} {self.base_url}/{endpoint} {response.status_code}")
 
         if response.status_code == 403:
             logging.info("Authentication failed: 403. Re-authenticating.")
@@ -122,10 +123,15 @@ class HannaCloudClient:
                 """
             ),
         }
-
-        response = self._make_request('POST', 'auth', json=json_data)
+        max_retries, retry_delay, retries = 3, 1, 0
+        while retries < max_retries:
+            response = self._make_request('POST', 'auth', json=json_data)
+            if response.get("login", {}):
+                break
+            retries += 1
+            time.sleep(retry_delay)
         if not response.get("login", {}):
-            raise ValueError("Authentication failed: 'login' key missing in response.")
+            raise AuthenticationError("Authentication failed: 'login' key missing in response.")
 
         for token in response['login']:
             if token.get('tokenType') == 'accessToken':
@@ -318,3 +324,8 @@ class HannaCloudClient:
         if response.get('deviceRemoteHold', {}).get('data', {}).get('message') != 'remoteHoldSuccess':
             raise ValueError("Remote hold failed.")
         return response.get('deviceRemoteHold', {})
+
+
+class AuthenticationError(Exception):
+    """Exception raised for authentication errors."""
+    pass
