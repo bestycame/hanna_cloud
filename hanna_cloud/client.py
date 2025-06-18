@@ -6,6 +6,7 @@ from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 from datetime import datetime
 import logging
+import time
 
 
 class HannaCloudClient:
@@ -46,12 +47,16 @@ class HannaCloudClient:
             return requests.request(method=method, url=url, headers=headers, **kwargs)
 
         response = _execute_request()
-        logging.info(f"{method} {self.base_url}/{endpoint} {response.status_code}")
-
-        if response.status_code == 403:
+        logging.debug(f"{method} {self.base_url}/{endpoint} {response.status_code}")
+        max_retries, retry_delay, retries = 3, 1, 0
+        while response.status_code == 403 and retries < max_retries:
             logging.info("Authentication failed: 403. Re-authenticating.")
             self.authenticate(self.email, self.password, self.key_base64)
             response = _execute_request()
+            retries += 1
+            time.sleep(retry_delay)
+        if response.status_code == 403:
+            raise AuthenticationError("Authentication failed to HannaCloud.")
 
         response.raise_for_status()
         return response.json().get('data', {})
@@ -318,3 +323,8 @@ class HannaCloudClient:
         if response.get('deviceRemoteHold', {}).get('data', {}).get('message') != 'remoteHoldSuccess':
             raise ValueError("Remote hold failed.")
         return response.get('deviceRemoteHold', {})
+
+
+class AuthenticationError(Exception):
+    """Exception raised for authentication errors."""
+    pass
