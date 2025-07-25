@@ -8,6 +8,9 @@ from datetime import datetime
 import logging
 import time
 
+# This key is NOT private. It is found in the JavaScript code of the Hanna Cloud webapp at https://www.hannacloud.com
+DEFAULT_ENCRYPTION_KEY = "MzJmODBmMDU0ZTAyNDFjYWM0YTVhOGQxY2ZlZTkwMDM="
+
 
 class HannaCloudClient:
     """Client for interacting with the HannaCloud API."""
@@ -17,8 +20,7 @@ class HannaCloudClient:
         Initialize the HannaCloud API client.
         """
         self.base_url = "https://www.hannacloud.com/api"
-        # TODO: Found in the JavaScript document. Update to fetch dynamically.
-        self.key_base64 = None
+        self.key_base64 = DEFAULT_ENCRYPTION_KEY
         self.headers = {'Accept': '*/*',
                         'content-type': 'application/json'}
         self.access_token = None
@@ -54,8 +56,24 @@ class HannaCloudClient:
             self.authenticate(self.email, self.password, self.key_base64)
             response = _execute_request()
 
-        response.raise_for_status()
-        return response.json().get('data', {})
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as e:
+            if response.status_code == 404:
+                raise DeviceNotFoundError(f"Resource not found: {endpoint}") from e
+            elif response.status_code == 401:
+                raise AuthenticationError("Invalid credentials or token expired") from e
+            elif response.status_code == 403:
+                raise AuthenticationError("Access forbidden - insufficient permissions") from e
+            elif response.status_code >= 500:
+                raise APIError(f"Server error: {response.status_code}", response.status_code) from e
+            else:
+                raise APIError(f"HTTP {response.status_code}: {e}", response.status_code) from e
+
+        try:
+            return response.json().get('data', {})
+        except ValueError as e:
+            raise APIError(f"Invalid JSON response: {e}", response_data=response.text) from e
 
     def hanna_encrypt(self, plaintext: str) -> str:
         """
@@ -80,7 +98,7 @@ class HannaCloudClient:
         # Return the IV and the encrypted data (as hex), separated by a colon
         return f"{iv.decode()}:{encrypted.hex()}"
 
-    def authenticate(self, email: str, password: str, key_base64: str) \
+    def authenticate(self, email: str, password: str) \
             -> tuple[str, str]:
         """
         Authenticates the user with the given email and password.
@@ -93,11 +111,8 @@ class HannaCloudClient:
         Raises:
             ValueError: If authentication fails or tokens are missing.
         """
-        if any(not x for x in (email, password, key_base64)):
-            raise ValueError("Authentication failed: missing email, password, or key_base64.")
         self.email = email
         self.password = password
-        self.key_base64 = key_base64
         json_data = {
             'operationName': 'Login',
             'variables': {
@@ -138,12 +153,36 @@ class HannaCloudClient:
                 self.access_token = token.get('token')
         return self.access_token
 
+    def is_authenticated(self) -> bool:
+        """
+        Check if the client is authenticated.
+        Returns:
+            bool: True if authenticated, False otherwise.
+        """
+        return self.access_token is not None
+
+    def _require_authentication(self):
+        """
+        Require authentication for protected operations.
+        Raises:
+            AuthenticationError: If not authenticated.
+        """
+        if not self.is_authenticated():
+            raise AuthenticationError("Authentication required. Call authenticate() first.")
+
     def get_last_device_reading(self, device_id: str):
         """
         Retrieves the last reading for the specified device(s).
+        Args:
+            device_id (str): The device ID to get readings for.
         Returns:
-            dict: Last device readings.
+            list: Last device readings.
+        Raises:
+            DeviceNotFoundError: If no readings are found for the device.
         """
+        self._require_authentication()
+        if not device_id:
+            raise ValidationError("device_id cannot be empty")
         json_data = {
             'operationName': 'GetLastDeviceReading',
             'variables': {'deviceIds': [device_id]},
@@ -160,7 +199,17 @@ class HannaCloudClient:
             )
         }
         response = self._make_request('POST', 'graphql', json=json_data)
-        return response.get('lastDeviceReadings', [])
+        readings = response.get('lastDeviceReadings', [[]])[0]
+        if not readings:
+            raise DeviceNotFoundError(f"No readings found for device {device_id}")
+
+        self.reading = readings
+        self.alarms = readings.get('messages', {}).get('alarms', [])
+        self.warnings = readings.get('messages', {}).get('warnings', [])
+        self.errors = readings.get('messages', {}).get('errors', [])
+        self.status = readings.get('messages', {}).get('status', {})
+        self.parameters = readings.get('messages', {}).get('parameters', {})
+        return readings
 
     def get_devices(self):
         """
@@ -168,6 +217,7 @@ class HannaCloudClient:
         Returns:
             dict: Device information.
         """
+        self._require_authentication()
         json_data = {
             "operationName": "Devices",
             "variables": {
@@ -219,7 +269,14 @@ class HannaCloudClient:
             )
         }
         response = self._make_request('POST', 'graphql', json=json_data)
-        return response.get('devices', [])
+        devices = response.get('devices', [])
+        for device in devices:
+            sy = device.get("reportedSettings", {}).get("SY")
+            device['manufacturer'] = sy.split(",")[0]
+            device['name'] = f"{device.get('DINFO', {}).get('deviceName')}"
+            device['serial_number'] = sy.split(",")[4]
+            device['sw_version'] = "".join(sy.split(",")[2:4]).replace("&#47;", "/")
+        return devices
 
     def get_user(self):
         """
@@ -227,6 +284,7 @@ class HannaCloudClient:
         Returns:
             dict: User information.
         """
+        self._require_authentication()
         json_data = {
             "operationName": "getUser",
             "variables": {},
@@ -267,8 +325,15 @@ class HannaCloudClient:
             from_dt (datetime): Start date for log history.
             to_dt (datetime): End date for log history.
         Returns:
-            dict: Device log history data.
+            list: Device log history data.
+        Raises:
+            DeviceLogError: If no device log history is found.
         """
+        self._require_authentication()
+        if not device_id:
+            raise ValidationError("device_id cannot be empty")
+        if from_dt and to_dt and from_dt > to_dt:
+            raise ValidationError("from_dt cannot be later than to_dt")
         from_dt = from_dt or datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         to_dt = to_dt or datetime.now()
 
@@ -297,15 +362,25 @@ class HannaCloudClient:
             )
         }
         response = self._make_request('POST', 'graphql', json=json_data)
-        return response.get('deviceLogHistory', [])
+        device_log_history = response.get('deviceLogHistory', [])
+        if not device_log_history:
+            raise DeviceLogError(f"No device log history found for device {device_id}")
+        return device_log_history
 
     def set_remote_hold(self, device_id: str, setting: bool):
         """
-        Sets the remote hold (disable pumps)setting for a device.
+        Sets the remote hold (disable pumps) setting for a device.
         Args:
             device_id (str): The device ID.
             setting (bool): The remote hold setting.
+        Raises:
+            RemoteHoldError: If the remote hold operation fails.
         """
+        self._require_authentication()
+        if not device_id:
+            raise ValidationError("device_id cannot be empty")
+        if not isinstance(setting, bool):
+            raise ValidationError("setting must be a boolean value")
         json_data = {
             "operationName": "RemoteHold",
             "variables": {"deviceId": device_id, "remoteHold": setting},
@@ -322,10 +397,43 @@ class HannaCloudClient:
         }
         response = self._make_request('POST', 'graphql', json=json_data)
         if response.get('deviceRemoteHold', {}).get('data', {}).get('message') != 'remoteHoldSuccess':
-            raise ValueError("Remote hold failed.")
+            raise RemoteHoldError("Remote hold operation failed. Check device status and permissions.")
         return response.get('deviceRemoteHold', {})
 
 
-class AuthenticationError(Exception):
+class HannaCloudError(Exception):
+    """Base exception for HannaCloud API errors."""
+    pass
+
+
+class AuthenticationError(HannaCloudError):
     """Exception raised for authentication errors."""
+    pass
+
+
+class DeviceNotFoundError(HannaCloudError):
+    """Exception raised when a device is not found."""
+    pass
+
+
+class APIError(HannaCloudError):
+    """Exception raised for general API errors."""
+    def __init__(self, message, status_code=None, response_data=None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.response_data = response_data
+
+
+class RemoteHoldError(HannaCloudError):
+    """Exception raised when remote hold operation fails."""
+    pass
+
+
+class DeviceLogError(HannaCloudError):
+    """Exception raised when device log operations fail."""
+    pass
+
+
+class ValidationError(HannaCloudError):
+    """Exception raised for validation errors."""
     pass
