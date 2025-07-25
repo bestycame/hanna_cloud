@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="hanna-cloud",
-    version="0.0.4",
+    version="0.0.5",
     author="Bestycame",
     author_email="bestycame@gmail.com",
     description="A Python client for the HannaCloud API",
