@@ -5,13 +5,13 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="hanna-cloud",
-    version="0.0.5",
+    version="0.0.6",
     author="Bestycame",
     author_email="bestycame@gmail.com",
     description="A Python client for the HannaCloud API",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/hannacloud/python-client",
+    url="https://github.com/bestycame/hanna_cloud",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 3 - Alpha",
