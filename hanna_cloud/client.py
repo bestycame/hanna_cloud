@@ -53,7 +53,7 @@ class HannaCloudClient:
 
         if response.status_code == 403:
             logging.info("Authentication failed: 403. Re-authenticating.")
-            self.authenticate(self.email, self.password, self.key_base64)
+            self.authenticate(self.email, self.password)
             response = _execute_request()
 
         try:
@@ -105,7 +105,6 @@ class HannaCloudClient:
         Args:
             email (str): The user's email address.
             password (str): The user's password.
-            key_base64 (str): The base64-encoded key.
         Returns:
             Tuple[str, str]: The access token and refresh token.
         Raises:
